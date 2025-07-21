@@ -1,19 +1,22 @@
 ﻿using System;
 using Verse;
+using HarmonyLib;
 
 namespace GptPawnDialogue
 {
     public sealed class Mod : Verse.Mod
     {
-        public const string Id = "Bubbles";
-        public const string Name = "Interaction Bubbles";
-        public const string Version = "4.1";
+        public const string Id = "GptPawnDialogue";
+        public const string Name = "GPT Pawn Dialogue";
+        public const string Version = "1.0";
 
         public static Mod Instance = null;
 
         public Mod(ModContentPack content) : base(content)
         {
             Instance = this;
+
+            new Harmony(Id).PatchAll();
 
             Log("Initialized");
         }
