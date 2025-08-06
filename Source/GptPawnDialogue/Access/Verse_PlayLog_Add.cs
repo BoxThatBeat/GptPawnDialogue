@@ -1,8 +1,7 @@
 ﻿using HarmonyLib;
-using OpenAI.Chat;
-using System;
-using System.Collections.Generic;
-using System.Text.Json;
+using Newtonsoft.Json;
+using System.Collections;
+using UnityEngine.Networking;
 using Verse;
 
 namespace GptPawnDialogue.Access
@@ -10,76 +9,16 @@ namespace GptPawnDialogue.Access
     [HarmonyPatch(typeof(PlayLog), nameof(PlayLog.Add))]
     public static class Verse_PlayLog_Add
     {
-        //private static readonly string JSON_SCHEMA = "{\n" +
-        //    "  \"name\": \"character_conversation\",\n" +
-        //    "  \"strict\": true,\n" +
-        //    "  \"schema\": {\n" +
-        //    "    \"type\": \"object\",\n" +
-        //    "    \"additionalProperties\": false,\n" +
-        //    "    \"required\": [\n" +
-        //    "      \"conversation_entries\"\n" +
-        //    "    ],\n" +
-        //    "    \"properties\": {\n" +
-        //    "      \"conversation_entries\": {\n" +
-        //    "        \"type\": \"array\",\n" +
-        //    "        \"items\": {\n" +
-        //    "          \"type\": \"object\",\n" +
-        //    "          \"additionalProperties\": false,\n" +
-        //    "          \"required\": [\n" +
-        //    "            \"character_name\",\n" +
-        //    "            \"dialogue_line\"\n" +
-        //    "          ],\n" +
-        //    "          \"properties\": {\n" +
-        //    "            \"character_name\": {\n" +
-        //    "              \"type\": \"string\"\n" +
-        //    "            },\n" +
-        //    "            \"dialogue_line\": {\n" +
-        //    "              \"type\": \"string\"\n" +
-        //    "            }\n" +
-        //    "          }\n" +
-        //    "        }\n" +
-        //    "      }\n" +
-        //    "    }\n" +
-        //    "  }\n" +
-        //    "}";
-
-        private static readonly byte[] JSON_SCHEMA = """
-{
-    "name": "character_conversation",
-    "strict": true,
-    "schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-            "conversation_entries"
-        ],
-        "properties": {
-            "conversation_entries": {
-                "type": "array",
-                "items": {
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"character_name",
-						"dialogue_line"
-					],
-					"properties": {
-						"character_name": {
-							"type": "string"
-						},
-						"dialogue_line": {
-							"type": "string"
-						}
-                    }
-                }
-            }
-        }
-    }
-}
-"""u8.ToArray();
 
         private static string GetPawnInfo(Pawn pawn)
         {
+            Logger.Message($"PAWN INFO:");
+            Logger.Message($"  Name: {pawn.Name.ToStringShort}");
+            Logger.Message($"  Faction: {pawn.Faction?.Name ?? "None"}");
+            Logger.Message($"  Gender: {pawn.gender}");
+            Logger.Message($"  Age: {pawn.ageTracker.AgeNumberString}");
+            Logger.Message($"  Backstory Childhood: {pawn.story.Childhood.description}");
+
             var pawnInfo = "";
             //TODO: add pawn's current needs and skills and traits
             //TODO: fix the pawns story to have the name of the pawn in it
@@ -89,8 +28,32 @@ namespace GptPawnDialogue.Access
             pawnInfo += $"  Age: {pawn.ageTracker.AgeNumberString}\r\n";
             pawnInfo += $"  Faction: {pawn.Faction?.Name ?? "None"}\r\n";
             pawnInfo += $"  Backstory Childhood: {pawn.story.Childhood.description}\r\n";
-            pawnInfo += $"  Backstory Adulthood: {pawn.story.Adulthood.description}\r\n";
+
+            if (pawn.story.Adulthood != null)
+            {
+                Logger.Message($"  Backstory Adulthood: {pawn.story.Adulthood.description}");
+                pawnInfo += $"  Backstory Adulthood: {pawn.story.Adulthood.description}\r\n";
+            }
+            
             return pawnInfo;
+        }
+
+
+        public static IEnumerator PostJson(string url, string json, string bearerToken)
+        {
+            var request = new UnityWebRequest(url, "POST");
+            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+            request.SetRequestHeader("Authorization", "Bearer " + bearerToken);
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+                Verse.Log.Message("Response: " + request.downloadHandler.text);
+            else
+                Verse.Log.Error($"Error: {request.responseCode} - {request.error}");
         }
 
         private static void Postfix(LogEntry entry)
@@ -100,59 +63,81 @@ namespace GptPawnDialogue.Access
             switch (entry)
             {
                 case PlayLogEntry_InteractionWithMany interaction:
-                    Mod.Log("InteractionWithMany log entry detected, which is not supported.");
+                    Logger.Message("InteractionWithMany log entry detected, which is not supported.");
                     return;
                 case PlayLogEntry_Interaction interaction:
                     initiator = (Pawn)Reflection.Verse_PlayLogEntry_Interaction_Initiator.GetValue(interaction);
                     recipient = (Pawn)Reflection.Verse_PlayLogEntry_Interaction_Recipient.GetValue(interaction);
                     break;
                 case PlayLogEntry_InteractionSinglePawn interaction:
-                    initiator = (Pawn)Reflection.Verse_PlayLogEntry_InteractionSinglePawn_Initiator.GetValue(interaction);
-                    recipient = null;
-                    break;
+                    //initiator = (Pawn)Reflection.Verse_PlayLogEntry_InteractionSinglePawn_Initiator.GetValue(interaction);
+                    //recipient = null;
+                    return;
                 default:
                     return;
             }
 
-            if (initiator is null || initiator.Map != Find.CurrentMap) { return; }
+            if (initiator is null || initiator.Map != Find.CurrentMap || recipient is null || recipient.Map != Find.CurrentMap) { return; }
 
-            //TODO: Move
             var apiKey = "";
-            ChatClient client = new ChatClient("gpt-4o-mini", apiKey);
-            
+
+
             //TODO use string builder
 
-            string prompt = "You are a creative dialogue/script generator for the video game Rimworld. ";
+            string prompt = "You are a creative dialogue/script generator for the video game Rimworld. The conversation_entries array in your response should always be between 2-5 entires in length";
 
             prompt += $"Two characters in my world are interacting with this \"{entry.ToGameStringFromPOV(initiator)}\" <- interaction text\r\nHere is some background on both chacters which could potentially be relavant to their conversation: ";
 
             prompt += GetPawnInfo(initiator);
             prompt += GetPawnInfo(recipient);
 
-            Mod.Log(prompt);
+            Logger.Message(prompt);
 
-            List<ChatMessage> messages = new List<ChatMessage>() { 
-                new UserChatMessage(prompt),
+            var jsonSchemaObject = new
+            {
+                type = "object",
+                additionalProperties = false,
+                required = new[] { "conversation_entries" },
+                properties = new
+                {
+                    conversation_entries = new
+                    {
+                        type = "array",
+                        items = new
+                        {
+                            type = "object",
+                            additionalProperties = false,
+                            required = new[] { "character_name", "dialogue_line" },
+                            properties = new
+                            {
+                                character_name = new { type = "string" },
+                                dialogue_line = new { type = "string" }
+                            }
+                        }
+                    }
+                }
             };
 
-            ChatCompletionOptions options = new ChatCompletionOptions()
+            var request = new
             {
-                Temperature = 0.7f,
-                TopP = 0.8f,
-                ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
-                    jsonSchemaFormatName: "character_conversation",
-                    jsonSchema: BinaryData.FromBytes(JSON_SCHEMA),
-                    jsonSchemaIsStrict: true)
+                model = "gpt-4o-mini",
+                messages = new[] { new { role = "user", content = prompt } },
+                max_tokens = 300,
+                response_format = new
+                {
+                    type = "json_schema",
+                    json_schema = new
+                    {
+                        name = "dialogue_generation",
+                        strict = true,
+                        schema = jsonSchemaObject
+                    }
+                }
             };
 
-            ChatCompletion completion = client.CompleteChat(messages, options);
+            var json = JsonConvert.SerializeObject(request);
 
-            using JsonDocument structuredJson = JsonDocument.Parse(completion.Content[0].Text);
-            foreach (JsonElement conversationEntry in structuredJson.RootElement.GetProperty("conversation_entries").EnumerateArray())
-            {
-                Mod.Log($"Pawn: {conversationEntry.GetProperty("character_name")}");
-                Mod.Log($"Dialogue: {conversationEntry.GetProperty("dialogue_line")}");
-            }
+            CoroutineRunner.Instance.StartCoroutine(PostJson("https://api.openai.com/v1/chat/completions", json, apiKey));
         }
     }
 }

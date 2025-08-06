@@ -1,6 +1,8 @@
-﻿using System;
+﻿using HarmonyLib;
+using System;
+using System.Threading;
+using UnityEngine;
 using Verse;
-using HarmonyLib;
 
 namespace GptPawnDialogue
 {
@@ -10,6 +12,8 @@ namespace GptPawnDialogue
         public const string Name = "GPT Pawn Dialogue";
         public const string Version = "1.0";
 
+        public static CancellationTokenSource onQuit = new();
+
         public static Mod Instance = null;
 
         public Mod(ModContentPack content) : base(content)
@@ -18,12 +22,15 @@ namespace GptPawnDialogue
 
             new Harmony(Id).PatchAll();
 
-            Log("Initialized");
+            Application.wantsToQuit += () =>
+            {
+                onQuit.Cancel();
+                return true;
+            };
+
+            Logger.Message("Initialized");
         }
 
-        public static void Log(string message) => Verse.Log.Message(PrefixMessage(message));
-        public static void Warning(string message) => Verse.Log.Warning(PrefixMessage(message));
-        public static void Error(string message) => Verse.Log.Error(PrefixMessage(message));
-        private static string PrefixMessage(string message) => $"[{Name} v{Version}] {message}";
+        public static bool Running => onQuit.IsCancellationRequested == false;
     }
 }
