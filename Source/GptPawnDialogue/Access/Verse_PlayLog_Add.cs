@@ -1,6 +1,10 @@
-﻿using HarmonyLib;
+﻿using GptPawnDialogue.Model;
+using HarmonyLib;
 using Newtonsoft.Json;
+using RimWorld;
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine.Networking;
 using Verse;
 
@@ -12,13 +16,6 @@ namespace GptPawnDialogue.Access
 
         private static string GetPawnInfo(Pawn pawn)
         {
-            Logger.Message($"PAWN INFO:");
-            Logger.Message($"  Name: {pawn.Name.ToStringShort}");
-            Logger.Message($"  Faction: {pawn.Faction?.Name ?? "None"}");
-            Logger.Message($"  Gender: {pawn.gender}");
-            Logger.Message($"  Age: {pawn.ageTracker.AgeNumberString}");
-            Logger.Message($"  Backstory Childhood: {pawn.story.Childhood.description}");
-
             var pawnInfo = "";
             //TODO: add pawn's current needs and skills and traits
             //TODO: fix the pawns story to have the name of the pawn in it
@@ -27,12 +24,11 @@ namespace GptPawnDialogue.Access
             pawnInfo += $"  Gender: {pawn.gender}\r\n";
             pawnInfo += $"  Age: {pawn.ageTracker.AgeNumberString}\r\n";
             pawnInfo += $"  Faction: {pawn.Faction?.Name ?? "None"}\r\n";
-            pawnInfo += $"  Backstory Childhood: {pawn.story.Childhood.description}\r\n";
+            pawnInfo += $"  Backstory Childhood: {pawn.story.Childhood.FullDescriptionFor(pawn)}\r\n";
 
             if (pawn.story.Adulthood != null)
             {
-                Logger.Message($"  Backstory Adulthood: {pawn.story.Adulthood.description}");
-                pawnInfo += $"  Backstory Adulthood: {pawn.story.Adulthood.description}\r\n";
+                pawnInfo += $"  Backstory Adulthood: {pawn.story.Adulthood.FullDescriptionFor(pawn)}\r\n";
             }
             
             return pawnInfo;
@@ -41,6 +37,8 @@ namespace GptPawnDialogue.Access
 
         public static IEnumerator PostJson(string url, string json, string bearerToken)
         {
+            Logger.Message("ChatGPT Coroutine Started");
+
             var request = new UnityWebRequest(url, "POST");
             byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
             request.uploadHandler = new UploadHandlerRaw(bodyRaw);
@@ -50,15 +48,56 @@ namespace GptPawnDialogue.Access
 
             yield return request.SendWebRequest();
 
-            if (request.result == UnityWebRequest.Result.Success)
-                Verse.Log.Message("Response: " + request.downloadHandler.text);
-            else
-                Verse.Log.Error($"Error: {request.responseCode} - {request.error}");
+            try
+            {
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    var response = JsonConvert.DeserializeObject<OpenAIResponse>(request.downloadHandler.text);
+
+
+                    if (response.Choices?.Count > 0)
+                    {
+                        var message = (response.Choices[0].Message.Content ?? "");
+
+                        PawnConversation pawnConversation = JsonConvert.DeserializeObject<PawnConversation>(message);
+
+                        if (pawnConversation.ConversationEntries != null)
+                        {
+                            foreach (ConversationEntry entry in pawnConversation.ConversationEntries)
+                            {
+                                Logger.Message($"{entry.CharacterName}:  \"{entry.DialogueLine}\"");
+                            }
+                        }
+                        else
+                        {
+                            Logger.Error("No conversation entries found in response.");
+                        }
+                    }
+                    else
+                    {
+                        Logger.Error("No choices found in response.");
+                    }
+                }
+                else
+                {
+                    Logger.Error($"Error: {request.responseCode} - {request.error}");
+                    Logger.Error($"UnityWebRequest error: {request.error}");
+                    Logger.Error($"Response code: {request.responseCode}");
+                    Logger.Error($"Response text: {request.downloadHandler.text}");
+                }
+            } 
+            catch (Exception e)
+            {
+                Logger.Error($"Aaron ERROR: {e.Message}");
+            }
+            
+                
         }
 
         private static void Postfix(LogEntry entry)
         {
             Pawn initiator, recipient;
+            InteractionDef interactionDef;
 
             switch (entry)
             {
@@ -68,6 +107,7 @@ namespace GptPawnDialogue.Access
                 case PlayLogEntry_Interaction interaction:
                     initiator = (Pawn)Reflection.Verse_PlayLogEntry_Interaction_Initiator.GetValue(interaction);
                     recipient = (Pawn)Reflection.Verse_PlayLogEntry_Interaction_Recipient.GetValue(interaction);
+                    interactionDef = (InteractionDef)Reflection.Verse_PlayLogEntry_Interaction_IntDef.GetValue(interaction);
                     break;
                 case PlayLogEntry_InteractionSinglePawn interaction:
                     //initiator = (Pawn)Reflection.Verse_PlayLogEntry_InteractionSinglePawn_Initiator.GetValue(interaction);
@@ -86,10 +126,10 @@ namespace GptPawnDialogue.Access
 
             string prompt = "You are a creative dialogue/script generator for the video game Rimworld. The conversation_entries array in your response should always be between 2-5 entires in length";
 
-            prompt += $"Two characters in my world are interacting with this \"{entry.ToGameStringFromPOV(initiator)}\" <- interaction text\r\nHere is some background on both chacters which could potentially be relavant to their conversation: ";
-
+            prompt += $"Two characters in my world are interacting with this interaction type: \"{interactionDef.defName}\" with this interaction prompt: \"{entry.ToGameStringFromPOV(initiator)}\" \r\nHere is some background on both chacters which could potentially be relavant to their conversation: ";
             prompt += GetPawnInfo(initiator);
             prompt += GetPawnInfo(recipient);
+            prompt += $"{initiator.Name.ToStringShort}'s opinion and relationship with {recipient.Name.ToStringShort} is: {initiator.relations.OpinionExplanation(recipient)}";
 
             Logger.Message(prompt);
 
@@ -137,7 +177,13 @@ namespace GptPawnDialogue.Access
 
             var json = JsonConvert.SerializeObject(request);
 
-            CoroutineRunner.Instance.StartCoroutine(PostJson("https://api.openai.com/v1/chat/completions", json, apiKey));
+            try
+            {
+                CoroutineRunner.Instance.StartCoroutine(PostJson("https://api.openai.com/v1/chat/completions", json, apiKey));
+            } catch (Exception e)
+            {
+                Logger.Error("Coroutine failed: " + e.Message);
+            }
         }
     }
 }

@@ -48,6 +48,8 @@
     <Compile Include="CoroutineRunner.cs" />
     <Compile Include="Logger.cs" />
     <Compile Include="Mod.cs" />
+    <Compile Include="Model\OpenAIResponse.cs" />
+    <Compile Include="Model\PawnConversation.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
